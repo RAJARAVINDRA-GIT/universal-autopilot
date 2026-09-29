@@ -26,6 +26,19 @@ jobs:
           test -f extracted/universal-autopilot/gradlew
           test -f extracted/universal-autopilot/settings.gradle.kts
 
+      - name: Patch RemoteInput compatibility
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("extracted/universal-autopilot/platform/src/main/java/com/universal/autopilot/platform/notifications/AutopilotNotificationListener.kt")
+          s = p.read_text()
+          old = "val inputs = action.remoteInputs ?: emptyArray()"
+          new = "val inputs = (action.remoteInputs ?: emptyArray()).map(RemoteInput::fromCompat).toTypedArray()"
+          if old not in s:
+              raise SystemExit("Expected RemoteInput line was not found")
+          p.write_text(s.replace(old, new, 1))
+          PY
+
       - name: Set up JDK 17
         uses: actions/setup-java@v5
         with:
