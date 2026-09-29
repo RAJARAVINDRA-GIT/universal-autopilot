@@ -26,13 +26,15 @@ jobs:
           test -f extracted/universal-autopilot/gradlew
           test -f extracted/universal-autopilot/settings.gradle.kts
 
-      - name: Patch Android compatibility
+      - name: Patch Android compatibility and app UX
         run: |
           python3 - <<'PY'
           from pathlib import Path
 
-          # Fix Android RemoteInput -> AndroidX RemoteInput conversion.
-          p = Path("extracted/universal-autopilot/platform/src/main/java/com/universal/autopilot/platform/notifications/AutopilotNotificationListener.kt")
+          root = Path("extracted/universal-autopilot")
+
+          # Android RemoteInput -> AndroidX RemoteInput conversion.
+          p = root / "platform/src/main/java/com/universal/autopilot/platform/notifications/AutopilotNotificationListener.kt"
           s = p.read_text()
           old = "val inputs = action.remoteInputs ?: emptyArray()"
           new = """val inputs = (action.remoteInputs ?: emptyArray()).map { input: android.app.RemoteInput ->
@@ -47,8 +49,8 @@ jobs:
               s = s.replace(old, new, 1)
           p.write_text(s)
 
-          # Hilt-compatible Service + coroutine scope.
-          p = Path("extracted/universal-autopilot/app/src/main/java/com/universal/autopilot/service/AutopilotService.kt")
+          # Hilt-compatible foreground Service.
+          p = root / "app/src/main/java/com/universal/autopilot/service/AutopilotService.kt"
           s = p.read_text()
           s = s.replace("import androidx.lifecycle.LifecycleService\n", "import android.app.Service\n")
           s = s.replace("import androidx.lifecycle.lifecycleScope\n", "")
@@ -58,6 +60,250 @@ jobs:
           s = s.replace("lifecycleScope.launch", "serviceScope.launch")
           s = s.replace("        super.onDestroy()\n", "        serviceScope.cancel()\n        super.onDestroy()\n", 1)
           s = s.replace("        super.onBind(intent)\n", "")
+          p.write_text(s)
+
+          # Fix chat race: include the just-sent user message in the model history.
+          p = root / "app/src/main/java/com/universal/autopilot/ui/bob/BobViewModel.kt"
+          s = p.read_text()
+          old = """            runtime.addChat(BobMessage(UUID.randomUUID().toString(), BobRole.USER, text))
+            val history = chat.value"""
+          new = """            val userMessage = BobMessage(UUID.randomUUID().toString(), BobRole.USER, text)
+            runtime.addChat(userMessage)
+            val history = chat.value + userMessage"""
+          if old not in s:
+              raise SystemExit("BobViewModel history block not found")
+          p.write_text(s.replace(old, new, 1))
+
+          # Make offline BOB useful and varied instead of returning the same fallback.
+          p = root / "app/src/main/java/com/universal/autopilot/bob/BobBrain.kt"
+          s = p.read_text()
+          start = s.index("    private fun localChat(user: String): String {")
+          end = s.index("\n    private fun heuristicParse", start)
+          replacement = '''    private fun localChat(user: String): String {
+        val raw = user.trim()
+        val lower = raw.lowercase()
+        return when {
+            raw.isBlank() ->
+                "I’m listening. Send a question or directive."
+            lower.matches(Regex("^(hi|hello|hey|yo|hii|good morning|good evening)[!. ]*$")) ->
+                "BOB online. What do you need?"
+            "who are you" in lower || "what are you" in lower ->
+                "I’m BOB, the local autopilot assistant. I can help with rules, notifications, drafts, and device actions."
+            "help" in lower ->
+                "Try: “create a WhatsApp rule”, “summarize WhatsApp”, “draft a reply”, or ask me a normal question."
+            "rule" in lower || ("when" in lower && ("then" in lower || "do" in lower)) ->
+                "I can create a WHEN → DO → UNLESS rule. Example: “When WhatsApp from Mom arrives, draft a reply unless battery is below 15%.”"
+            "summar" in lower || "digest" in lower ->
+                "Use /sum com.whatsapp to summarize the latest captured notification thread."
+            "draft" in lower || "reply" in lower ->
+                "Tell me the app, who the reply is for, and the tone. I’ll prepare a draft without sending it."
+            "notification" in lower ->
+                "Notification automation is available when Notification Access is enabled in Settings."
+            "accessibility" in lower || "overlay" in lower ->
+                "Enable Accessibility and Display over other apps in Settings to let the autopilot operate across apps."
+            "status" in lower || "online" in lower ->
+                "BOB is running locally. AI responses require an API key configured in Settings."
+            lower.endsWith("?") ->
+                "I received your question, but the AI link is offline. Add an API key in Settings for full natural-language answers."
+            else ->
+                "I received: “$raw”. The AI link is offline, so I can handle local automation commands but need an API key for open-ended answers."
+        }
+    }
+'''
+          s = s[:start] + replacement + s[end:]
+          # Only return API fallback on failures; preserve the user's configured endpoint/model.
+          s = s.replace('json.decodeFromString<ChatResponse>(payload).choices.firstOrNull()?.message?.content ?: fallback',
+                        'if (!response.isSuccessful) fallback else json.decodeFromString<ChatResponse>(payload).choices.firstOrNull()?.message?.content?.takeIf { it.isNotBlank() } ?: fallback')
+          p.write_text(s)
+
+          # Improve global contrast.
+          p = root / "core/src/main/java/com/universal/autopilot/core/ui/theme/Theme.kt"
+          s = p.read_text()
+          s = s.replace("val Glass = Color(0x66101828)", "val Glass = Color(0xE6141C2E)")
+          s = s.replace("        fontSize = 16.sp,\n        letterSpacing = 1.1.sp,\n    ),",
+                        "        fontSize = 16.sp,\n        letterSpacing = 1.1.sp,\n        color = Color(0xFFF4FAFF),\n    ),")
+          s = s.replace("        lineHeight = 20.sp,\n    ),",
+                        "        lineHeight = 20.sp,\n        color = Color(0xFFF4FAFF),\n    ),")
+          p.write_text(s)
+
+          # Replace BOB screen with higher-contrast message bubbles and visible input text.
+          p = root / "app/src/main/java/com/universal/autopilot/ui/bob/BobScreen.kt"
+          p.write_text(r'''package com.universal.autopilot.ui.bob
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
+import com.universal.autopilot.core.model.BobRole
+import com.universal.autopilot.core.ui.components.CyberBackdrop
+import com.universal.autopilot.core.ui.components.GlassPanel
+import com.universal.autopilot.core.ui.theme.Cyan
+import com.universal.autopilot.core.ui.theme.Magenta
+
+private val TextBright = Color(0xFFF4FAFF)
+private val BubbleBob = Color(0xFF101C30)
+private val BubbleUser = Color(0xFF25102A)
+
+@Composable
+fun BobScreen(vm: BobViewModel = hiltViewModel()) {
+    val chat by vm.chat.collectAsState()
+    val drafts by vm.drafts.collectAsState()
+    var input by remember { mutableStateOf("") }
+
+    CyberBackdrop {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .imePadding()
+                .padding(16.dp),
+        ) {
+            Text("BOB // NEURAL LINK", color = Cyan)
+            Text(
+                "AUTOPILOT ASSISTANT · LOCAL MODE READY",
+                color = TextBright,
+                modifier = Modifier.padding(top = 4.dp, bottom = 10.dp),
+            )
+
+            LazyColumn(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                items(drafts, key = { it.id }) { draft ->
+                    GlassPanel(accentMagenta = true) {
+                        Text("PENDING TRANSMIT", color = Magenta)
+                        Text(
+                            draft.body,
+                            color = TextBright,
+                            modifier = Modifier.padding(top = 6.dp),
+                        )
+                        Row {
+                            TextButton(onClick = { vm.approve(draft) }) {
+                                Text("APPROVE", color = Cyan)
+                            }
+                            TextButton(onClick = { vm.reject(draft.id) }) {
+                                Text("SCRUB", color = Magenta)
+                            }
+                        }
+                    }
+                }
+
+                items(chat, key = { it.id }) { msg ->
+                    val isUser = msg.role == BobRole.USER
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth(0.90f)
+                                .background(
+                                    if (isUser) BubbleUser else BubbleBob,
+                                    RoundedCornerShape(16.dp),
+                                )
+                                .padding(14.dp),
+                        ) {
+                            Text(
+                                if (isUser) "YOU" else "BOB",
+                                color = if (isUser) Magenta else Cyan,
+                            )
+                            Text(
+                                msg.content,
+                                color = TextBright,
+                                modifier = Modifier.padding(top = 5.dp),
+                            )
+                        }
+                    }
+                }
+            }
+
+            OutlinedTextField(
+                value = input,
+                onValueChange = { input = it },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = false,
+                maxLines = 4,
+                label = { Text("Ask BOB anything") },
+                placeholder = { Text("Try: What can you automate?") },
+                colors = TextFieldDefaults.colors(
+                    focusedTextColor = TextBright,
+                    unfocusedTextColor = TextBright,
+                    focusedLabelColor = Cyan,
+                    unfocusedLabelColor = TextBright,
+                    focusedPlaceholderColor = TextBright.copy(alpha = 0.65f),
+                    unfocusedPlaceholderColor = TextBright.copy(alpha = 0.65f),
+                    focusedContainerColor = Color(0xFF0B1220),
+                    unfocusedContainerColor = Color(0xFF0B1220),
+                    cursorColor = Cyan,
+                    focusedIndicatorColor = Cyan,
+                    unfocusedIndicatorColor = Cyan.copy(alpha = 0.55f),
+                ),
+            )
+
+            Button(
+                onClick = {
+                    val message = input.trim()
+                    if (message.isNotEmpty()) {
+                        vm.send(message)
+                        input = ""
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Cyan,
+                    contentColor = Color(0xFF05070F),
+                ),
+            ) {
+                Text("UPLINK")
+            }
+        }
+    }
+}
+''')
+
+          # Make settings fields readable too.
+          p = root / "app/src/main/java/com/universal/autopilot/ui/settings/SettingsScreen.kt"
+          s = p.read_text()
+          s = s.replace('import androidx.compose.material3.Text\n', 'import androidx.compose.material3.Text\nimport androidx.compose.material3.TextFieldDefaults\nimport androidx.compose.ui.graphics.Color\n')
+          s = s.replace('''                OutlinedTextField(endpoint, { endpoint = it }, label = { Text("BOB endpoint") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(model, { model = it }, label = { Text("Model") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(key, { key = it }, label = { Text("API key (encrypted)") }, modifier = Modifier.fillMaxWidth())''',
+                        '''                val fieldColors = TextFieldDefaults.colors(
+                    focusedTextColor = Color(0xFFF4FAFF),
+                    unfocusedTextColor = Color(0xFFF4FAFF),
+                    focusedLabelColor = Cyan,
+                    unfocusedLabelColor = Color(0xFFF4FAFF),
+                    focusedContainerColor = Color(0xFF0B1220),
+                    unfocusedContainerColor = Color(0xFF0B1220),
+                    cursorColor = Cyan,
+                    focusedIndicatorColor = Cyan,
+                    unfocusedIndicatorColor = Cyan.copy(alpha = 0.55f),
+                )
+                OutlinedTextField(endpoint, { endpoint = it }, label = { Text("BOB endpoint") }, modifier = Modifier.fillMaxWidth(), colors = fieldColors)
+                OutlinedTextField(model, { model = it }, label = { Text("Model") }, modifier = Modifier.fillMaxWidth(), colors = fieldColors)
+                OutlinedTextField(key, { key = it }, label = { Text("API key (encrypted)") }, modifier = Modifier.fillMaxWidth(), colors = fieldColors)''')
           p.write_text(s)
           PY
 
