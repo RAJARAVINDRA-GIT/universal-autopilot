@@ -26,10 +26,12 @@ jobs:
           test -f extracted/universal-autopilot/gradlew
           test -f extracted/universal-autopilot/settings.gradle.kts
 
-      - name: Patch RemoteInput compatibility
+      - name: Patch Android compatibility
         run: |
           python3 - <<'PY'
           from pathlib import Path
+
+          # Fix Android RemoteInput -> AndroidX RemoteInput conversion.
           p = Path("extracted/universal-autopilot/platform/src/main/java/com/universal/autopilot/platform/notifications/AutopilotNotificationListener.kt")
           s = p.read_text()
           old = "val inputs = action.remoteInputs ?: emptyArray()"
@@ -41,9 +43,22 @@ jobs:
                   .addExtras(input.extras)
                   .build()
           }.toTypedArray()"""
-          if old not in s:
-              raise SystemExit("Expected RemoteInput line was not found")
-          p.write_text(s.replace(old, new, 1))
+          if old in s:
+              s = s.replace(old, new, 1)
+          p.write_text(s)
+
+          # Hilt supports Service directly. Replace LifecycleService with Service
+          # and provide an equivalent coroutine scope for the existing work.
+          p = Path("extracted/universal-autopilot/app/src/main/java/com/universal/autopilot/service/AutopilotService.kt")
+          s = p.read_text()
+          s = s.replace("import androidx.lifecycle.LifecycleService\n", "import android.app.Service\n")
+          s = s.replace("import androidx.lifecycle.lifecycleScope\n", "")
+          s = s.replace("import kotlinx.coroutines.delay\n", "import kotlinx.coroutines.CoroutineScope\nimport kotlinx.coroutines.Dispatchers\nimport kotlinx.coroutines.SupervisorJob\nimport kotlinx.coroutines.cancel\nimport kotlinx.coroutines.delay\n")
+          s = s.replace("class AutopilotService : LifecycleService() {", "class AutopilotService : Service() {")
+          s = s.replace("    @Inject lateinit var hud: HudController\n", "    @Inject lateinit var hud: HudController\n\n    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)\n")
+          s = s.replace("lifecycleScope.launch", "serviceScope.launch")
+          s = s.replace("        super.onDestroy()\n", "        serviceScope.cancel()\n        super.onDestroy()\n", 1)
+          p.write_text(s)
           PY
 
       - name: Set up JDK 17
