@@ -40,14 +40,14 @@ jobs:
 
           p = root / "app/src/main/java/com/universal/autopilot/service/AutopilotService.kt"
           s = p.read_text()
-          s = s.replace("import androidx.lifecycle.LifecycleService\\n", "import android.app.Service\\n")
-          s = s.replace("import androidx.lifecycle.lifecycleScope\\n", "")
-          s = s.replace("import kotlinx.coroutines.delay\\n", "import kotlinx.coroutines.CoroutineScope\\nimport kotlinx.coroutines.Dispatchers\\nimport kotlinx.coroutines.SupervisorJob\\nimport kotlinx.coroutines.cancel\\nimport kotlinx.coroutines.delay\\n")
-          s = s.replace("class AutopilotService : LifecycleService() {", "class AutopilotService : Service() {")
-          s = s.replace("    @Inject lateinit var hud: HudController\\n", "    @Inject lateinit var hud: HudController\\n\\n    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)\\n")
+          s = s.replace("import androidx.lifecycle.LifecycleService", "import android.app.Service")
+          s = s.replace("import androidx.lifecycle.lifecycleScope", "")
+          s = s.replace("import kotlinx.coroutines.delay", "import kotlinx.coroutines.CoroutineScope\\nimport kotlinx.coroutines.Dispatchers\\nimport kotlinx.coroutines.SupervisorJob\\nimport kotlinx.coroutines.cancel\\nimport kotlinx.coroutines.delay")
+          s = s.replace("class AutopilotService : LifecycleService()", "class AutopilotService : Service()")
+          s = s.replace("    @Inject lateinit var hud: HudController", "    @Inject lateinit var hud: HudController\\n\\n    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)")
           s = s.replace("lifecycleScope.launch", "serviceScope.launch")
-          s = s.replace("        super.onDestroy()\\n", "        serviceScope.cancel()\\n        super.onDestroy()\\n", 1)
-          s = s.replace("        super.onBind(intent)\\n", "")
+          s = s.replace("        super.onDestroy()", "        serviceScope.cancel()\\n        super.onDestroy()", 1)
+          s = s.replace("        super.onBind(intent)", "")
           p.write_text(s)
 
           p = root / "app/src/main/java/com/universal/autopilot/ui/bob/BobViewModel.kt"
