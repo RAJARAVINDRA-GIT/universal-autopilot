@@ -33,7 +33,14 @@ jobs:
           p = Path("extracted/universal-autopilot/platform/src/main/java/com/universal/autopilot/platform/notifications/AutopilotNotificationListener.kt")
           s = p.read_text()
           old = "val inputs = action.remoteInputs ?: emptyArray()"
-          new = "val inputs = (action.remoteInputs ?: emptyArray()).map(RemoteInput::fromCompat).toTypedArray()"
+          new = """val inputs = (action.remoteInputs ?: emptyArray()).map { input: android.app.RemoteInput ->
+              RemoteInput.Builder(input.resultKey)
+                  .setLabel(input.label)
+                  .setChoices(input.choices)
+                  .setAllowFreeFormInput(input.allowFreeFormInput)
+                  .addExtras(input.extras)
+                  .build()
+          }.toTypedArray()"""
           if old not in s:
               raise SystemExit("Expected RemoteInput line was not found")
           p.write_text(s.replace(old, new, 1))
