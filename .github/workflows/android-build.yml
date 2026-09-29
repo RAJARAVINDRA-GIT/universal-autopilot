@@ -47,8 +47,7 @@ jobs:
               s = s.replace(old, new, 1)
           p.write_text(s)
 
-          # Hilt supports Service directly. Replace LifecycleService with Service
-          # and provide an equivalent coroutine scope for the existing work.
+          # Hilt-compatible Service + coroutine scope.
           p = Path("extracted/universal-autopilot/app/src/main/java/com/universal/autopilot/service/AutopilotService.kt")
           s = p.read_text()
           s = s.replace("import androidx.lifecycle.LifecycleService\n", "import android.app.Service\n")
@@ -58,6 +57,7 @@ jobs:
           s = s.replace("    @Inject lateinit var hud: HudController\n", "    @Inject lateinit var hud: HudController\n\n    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)\n")
           s = s.replace("lifecycleScope.launch", "serviceScope.launch")
           s = s.replace("        super.onDestroy()\n", "        serviceScope.cancel()\n        super.onDestroy()\n", 1)
+          s = s.replace("        super.onBind(intent)\n", "")
           p.write_text(s)
           PY
 
