@@ -70,9 +70,8 @@ jobs:
 
           p = root / "app/src/main/java/com/universal/autopilot/ui/bob/BobScreen.kt"
           s = p.read_text()
-          s = s.replace("import androidx.compose.ui.Modifier\\n", "import androidx.compose.ui.Modifier\\nimport androidx.compose.ui.graphics.Color\\n")
-          s = s.replace("Text(draft.body)", "Text(draft.body, color = Color(0xFFF4FAFF))")
-          s = s.replace("Text(msg.content)", "Text(msg.content, color = Color(0xFFF4FAFF))")
+          s = s.replace("Text(draft.body)", "Text(draft.body, color = androidx.compose.ui.graphics.Color(0xFFF4FAFF))")
+          s = s.replace("Text(msg.content)", "Text(msg.content, color = androidx.compose.ui.graphics.Color(0xFFF4FAFF))")
           p.write_text(s)
           PY
 
